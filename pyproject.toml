@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lse-terminal-brazil"
+version = "0.1.0"
+description = "Brazilian market data for LSE Terminal: B3's own public files and the Banco Central's open series API. No account, no vendor."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Pedro Toledo" }]
+keywords = ["b3", "bovespa", "brazil", "bacen", "market-data", "lse-terminal"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Natural Language :: Portuguese (Brazilian)",
+]
+dependencies = [
+    # The host application. This package is a plugin for it: it implements
+    # lse_terminal.contracts.Provider and is discovered through the
+    # entry-point group the terminal's registry reads at start.
+    "lse-terminal>=0.0.1",
+    "pandas>=1.5",
+    "numpy>=1.24",
+    # COTAHIST caches are written as parquet; a yearly file is millions of
+    # rows and re-parsing the fixed-width text on every chart is the thing
+    # the cache exists to avoid.
+    "pyarrow>=15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+# This is the whole install story. The terminal's registry walks this group
+# at start (see lse_terminal/engine/registry.py: load_plugins), instantiates
+# what it finds, and the sources appear in MARKETS. Nothing else to wire.
+[project.entry-points."lse_terminal.providers"]
+b3 = "lse_terminal_brazil:B3Provider"
+bcb = "lse_terminal_brazil:BcbProvider"
+
+[project.urls]
+Homepage = "https://github.com/PedroDnT/lse-terminal-brazil"
+Issues = "https://github.com/PedroDnT/lse-terminal-brazil/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lse_terminal_brazil"]
+
+[tool.hatch.build.targets.sdist]
+include = ["lse_terminal_brazil", "tests", "README.md", "LICENSE"]
