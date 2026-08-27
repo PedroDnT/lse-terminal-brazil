@@ -7,12 +7,22 @@ read straight from the institutions that publish it.
 pip install git+https://github.com/PedroDnT/lse-terminal-brazil
 ```
 
-Not on PyPI yet, so install from the repo for now; `pip install
-lse-terminal-brazil` is the intended form once it is published.
-
 Install it into whatever environment runs the terminal — the same one
 `lset` starts from, since that is the interpreter whose entry points get
-walked. Then restart the terminal. Two sources appear in MARKETS. There is nothing to
+walked. Then restart the terminal.
+
+Two install notes, both about packages that are not on PyPI in usable form:
+
+* **This package** is not published yet, hence the git URL. `pip install
+  lse-terminal-brazil` is the intended form once it is.
+* **The terminal itself** must be installed from source. The `lse-terminal`
+  distribution on PyPI is a name placeholder whose wheel contains an empty
+  package, so it will not satisfy this plugin — which is why the plugin does
+  not declare it as a dependency (pip would call the requirement met and
+  leave you with a broken import). Install the host with
+  `pip install git+https://github.com/londonstrategicedge/lse-terminal`, or
+  from a checkout. If it is missing, importing this package says so and
+  tells you the command. Two sources appear in MARKETS. There is nothing to
 configure and no account to open — B3 and the Banco Central both publish
 this data for free, and this package reads exactly those public sources
 with no vendor in the middle.

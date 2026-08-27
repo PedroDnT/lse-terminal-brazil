@@ -10,8 +10,28 @@ files; ``bcb`` reads the central bank's open series API. What each covers,
 and what it does not, is in each module's docstring and in the README.
 """
 
-from lse_terminal_brazil.b3 import B3Provider
-from lse_terminal_brazil.bcb import BcbProvider
+try:
+    from lse_terminal_brazil.b3 import B3Provider
+    from lse_terminal_brazil.bcb import BcbProvider
+except ModuleNotFoundError as e:  # pragma: no cover - install-shape problem
+    # Both shapes matter: no terminal at all (e.name == "lse_terminal") and
+    # the PyPI placeholder, which imports but has no submodules
+    # (e.name == "lse_terminal.contracts").
+    if e.name != "lse_terminal" and not (e.name or "").startswith("lse_terminal."):
+        raise
+    # The host is a prerequisite, not a pip dependency: the `lse-terminal`
+    # distribution on PyPI is a placeholder whose wheel ships an empty
+    # package, so pip cannot be asked to provide the real one. Say so,
+    # rather than leaving a bare ModuleNotFoundError on a submodule nobody
+    # has heard of.
+    raise ImportError(
+        "lse-terminal-brazil needs the LSE Terminal itself, and could not "
+        f"import {e.name}. The `lse-terminal` package on PyPI is only a "
+        "name placeholder (its wheel is empty), so install the terminal "
+        "from source instead:\n\n"
+        "    pip install git+https://github.com/londonstrategicedge/lse-terminal\n\n"
+        "then install this package into that same environment."
+    ) from e
 
 __all__ = ["B3Provider", "BcbProvider"]
 __version__ = "0.1.0"

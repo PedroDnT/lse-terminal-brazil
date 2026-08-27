@@ -50,12 +50,19 @@ jobs:
       - name: install
         run: |
           python -m pip install --upgrade pip
+          # The host comes from SOURCE, never PyPI: the `lse-terminal`
+          # release there is a name placeholder whose wheel ships an empty
+          # package, so a PyPI install produces an lse_terminal with no
+          # .contracts and every import here fails. This line is the whole
+          # reason CI exists -- it is the step that caught it.
+          pip install "git+https://github.com/londonstrategicedge/lse-terminal"
           pip install -e ".[dev]"
           # Pin the axis last so it wins over whatever the dependency tree
           # resolved on its own.
           pip install "pandas==${{ matrix.pandas }}.*"
           if [ -n "${{ matrix.numpy }}" ]; then pip install "numpy==${{ matrix.numpy }}.*"; fi
           python -c "import sys,pandas,numpy;print(sys.version.split()[0],pandas.__version__,numpy.__version__)"
+          python -c "import lse_terminal.contracts as c;print('host contract ok:',c.CANDLE_COLUMNS)"
       - name: offline suite
         run: pytest tests/ -q
       - name: the plugin is actually discovered by the terminal
@@ -86,6 +93,7 @@ jobs:
       - name: install
         run: |
           python -m pip install --upgrade pip
+          pip install "git+https://github.com/londonstrategicedge/lse-terminal"
           pip install -e ".[dev]"
       - name: the real B3 and Banco Central endpoints
         # A B3 holiday or an outage is a real red here, and that is the

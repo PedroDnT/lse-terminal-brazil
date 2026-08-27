@@ -18,11 +18,22 @@ classifiers = [
     "Topic :: Office/Business :: Financial :: Investment",
     "Natural Language :: Portuguese (Brazilian)",
 ]
+# NOTE the absence of lse-terminal here, which is deliberate and worth
+# explaining, because a plugin normally does depend on its host.
+#
+# The `lse-terminal` distribution on PyPI is a PLACEHOLDER: London
+# Strategic Edge reserved the name with a 0.0.1 release whose wheel
+# contains nothing but an empty `lse_terminal/__init__.py`. Declaring a
+# dependency on it is worse than declaring none, because pip then reports
+# the requirement satisfied by a package that cannot host a plugin, and
+# the failure surfaces later as a bare ModuleNotFoundError on
+# `lse_terminal.contracts`.
+#
+# So the host is a documented prerequisite rather than a resolvable
+# dependency: install the terminal from its source repository, and
+# __init__.py says exactly that if it is missing. Revisit this the day a
+# real lse-terminal release lands on PyPI.
 dependencies = [
-    # The host application. This package is a plugin for it: it implements
-    # lse_terminal.contracts.Provider and is discovered through the
-    # entry-point group the terminal's registry reads at start.
-    "lse-terminal>=0.0.1",
     "pandas>=1.5",
     "numpy>=1.24",
     # COTAHIST caches are written as parquet; a yearly file is millions of
