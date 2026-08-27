@@ -104,7 +104,11 @@ class BcbProvider(Provider):
         self._cache: dict[str, tuple[float, pd.DataFrame]] = {}
 
     def cache_dir(self) -> Path:
-        d = self._cache_dir or (cfg.config_dir() / "bcb")
+        # Coerced rather than assumed: a caller passing a plain string is
+        # the obvious thing to do, and without this it fails much later
+        # inside a download as an AttributeError that reads like the source
+        # is down.
+        d = Path(self._cache_dir) if self._cache_dir else (cfg.config_dir() / "bcb")
         d.mkdir(parents=True, exist_ok=True)
         return d
 

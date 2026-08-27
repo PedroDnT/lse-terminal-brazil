@@ -227,7 +227,11 @@ class B3Provider(Provider):
     # ── cache ───────────────────────────────────────────────────────────
 
     def cache_dir(self) -> Path:
-        d = self._cache_dir or (cfg.config_dir() / "b3")
+        # Coerced rather than assumed: a caller passing a plain string is
+        # the obvious thing to do, and without this it fails much later
+        # inside a download as an AttributeError that reads like the source
+        # is down.
+        d = Path(self._cache_dir) if self._cache_dir else (cfg.config_dir() / "b3")
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -295,7 +299,12 @@ class B3Provider(Provider):
             stamp = day.strftime("%d%m%Y")
             try:
                 frame = self._cached_cotahist("D", stamp)
-            except Exception as e:  # not published yet, or a holiday
+            except (B3Error, OSError, ValueError) as e:
+                # A session B3 has not published, a holiday, or the network
+                # being unreachable. Anything else -- a TypeError, an
+                # AttributeError -- is a bug in this code, and reporting it
+                # as "the exchange published nothing" would send whoever
+                # hits it looking in entirely the wrong place.
                 errors.append(f"{day}: {e}")
                 continue
             if len(frame):

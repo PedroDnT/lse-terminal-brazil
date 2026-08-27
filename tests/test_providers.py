@@ -383,3 +383,34 @@ def test_bcb_empty_window_is_a_gap_not_a_crash():
 
 def test_bcb_passes_the_compliance_harness():
     assert check_provider(bcb_provider()) == []
+
+
+# ── plugin robustness ───────────────────────────────────────────────────
+
+def test_cache_dir_accepts_a_plain_string():
+    """A string path is the obvious thing for a caller to pass.
+
+    Without coercion it survives construction and fails much later inside
+    a download, as an AttributeError that the caller sees reported as "B3
+    published no file" -- sending them to check the exchange instead of
+    their own call.
+    """
+    for provider in (B3Provider(cache_dir=tempfile.mkdtemp()),
+                     BcbProvider(cache_dir=tempfile.mkdtemp())):
+        assert isinstance(provider.cache_dir(), Path)
+        assert provider.cache_dir().is_dir()
+
+
+def test_a_bug_is_not_reported_as_the_exchange_being_quiet():
+    """Our own errors must not be laundered into "no file published".
+
+    _latest_session walks back over days and treats a failure as a
+    holiday. That is right for a missing file and wrong for a TypeError,
+    which is a bug here and has to surface as one.
+    """
+    def broken_fetch(url, timeout=0):
+        raise TypeError("this is a bug in our own code, not a holiday")
+
+    p = B3Provider(cache_dir=Path(tempfile.mkdtemp()), fetch=broken_fetch)
+    with pytest.raises(TypeError):
+        p.search("")
