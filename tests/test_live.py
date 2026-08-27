@@ -71,6 +71,23 @@ def test_cotahist_still_downloads_and_parses(tmp_path):
     assert {"B3 Ações", "B3 ETFs", "B3 Fundos Imobiliários", "B3 BDRs"} <= categories
 
 
+def test_deep_history_reaches_the_years_only_the_yearly_archive_covers(tmp_path):
+    """The oldest grain, which is where the naming and fallback bugs lived.
+
+    B3 publishes no monthly file for 2000, so this only works if the plan
+    falls back to that year's yearly archive -- and that archive names its
+    member "COTAHIST.A2000", not "...TXT". Both were broken at once and the
+    only symptom was a bogus "no history for PETR4". The recent-file tests
+    could not see either, because recent files have monthly grains and the
+    modern name.
+    """
+    df = B3Provider(cache_dir=tmp_path).candles(
+        "PETR4", "1d", start="2000-01-03", end="2000-03-31", limit=10)
+    assert_candle_frame(df, minimum=5)
+    # Pre-split prices, so this also pins that no silent rescaling crept in.
+    assert df["close"].min() > 100
+
+
 def test_daily_candles_come_back_from_the_real_files(tmp_path):
     df = B3Provider(cache_dir=tmp_path).candles("PETR4", "1d", limit=5)
     assert_candle_frame(df, minimum=3)

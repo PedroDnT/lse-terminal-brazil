@@ -414,3 +414,58 @@ def test_a_bug_is_not_reported_as_the_exchange_being_quiet():
     p = B3Provider(cache_dir=Path(tempfile.mkdtemp()), fetch=broken_fetch)
     with pytest.raises(TypeError):
         p.search("")
+
+
+def test_old_archives_name_their_member_differently():
+    """B3's member naming is not stable across the archive's history.
+
+    Recent years hold "COTAHIST_A2015.TXT"; older ones hold
+    "COTAHIST.A2000" — a dot, and no extension. Matching on ".TXT"
+    silently lost every year before that changeover, and the symptom was
+    a bogus "no end-of-day history for PETR4" rather than anything
+    pointing at the ZIP.
+    """
+    for member in ("COTAHIST.A2000", "COTAHIST_A2015.TXT", "whatever.dat"):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(member, FIXTURE.read_bytes())
+        p = B3Provider(cache_dir=Path(tempfile.mkdtemp()),
+                       fetch=StubFetch({"COTAHIST": buf.getvalue()}))
+        assert "PETR4" in {i.symbol for i in p.search("", limit=500)}, member
+
+
+def test_a_short_download_is_caught_at_the_download():
+    """A yearly archive is tens of MB; a dropped connection returns a
+    truncated body, and a truncated ZIP fails much later as corruption
+    with nothing pointing at the transfer. The length check catches it
+    where it happens, and a retry is what actually fixes it."""
+    import urllib.error
+    from lse_terminal_brazil import b3 as mod
+
+    calls = {"n": 0}
+    full = cotahist_zip()
+
+    class FakeResponse:
+        def __init__(self, body, declared):
+            self._body, self.headers = body, {"Content-Length": str(declared)}
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        calls["n"] += 1
+        # First attempt comes back short, second is whole.
+        return (FakeResponse(full[:10], len(full)) if calls["n"] == 1
+                else FakeResponse(full, len(full)))
+
+    real = mod.urllib.request.urlopen
+    mod.urllib.request.urlopen = fake_urlopen
+    try:
+        body = mod._http_get("https://example.invalid/x.zip")
+    finally:
+        mod.urllib.request.urlopen = real
+    assert body == full
+    assert calls["n"] == 2, "the short read should have been retried"

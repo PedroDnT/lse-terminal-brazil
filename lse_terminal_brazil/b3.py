@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta, timezone
@@ -259,10 +260,17 @@ class B3Provider(Provider):
                 absent.touch()
             raise
         with zipfile.ZipFile(BytesIO(raw)) as z:
-            names = [n for n in z.namelist() if n.upper().endswith(".TXT")]
-            if not names:
-                raise B3Error(f"COTAHIST_{kind}{stamp}.ZIP has no TXT member")
-            frame = parse_cotahist(z.read(names[0]))
+            # The member name is NOT stable across B3's history: recent
+            # archives hold "COTAHIST_A2015.TXT", but the older ones hold
+            # "COTAHIST.A2000" -- a dot, and no extension at all. Matching
+            # on ".TXT" silently lost every year before that changeover.
+            # The largest member is the data file under either convention,
+            # and under any future one.
+            members = [i for i in z.infolist() if not i.is_dir() and i.file_size]
+            if not members:
+                raise B3Error(f"COTAHIST_{kind}{stamp}.ZIP is empty")
+            biggest = max(members, key=lambda i: i.file_size)
+            frame = parse_cotahist(z.read(biggest))
         frame.to_parquet(path, index=False)
         return frame
 
@@ -457,23 +465,49 @@ class B3Provider(Provider):
                end: str | None) -> pd.DataFrame:
         first, last = self._window(limit, start, end)
         frames, errors = [], []
-        for kind, stamp in self.file_plan(first, last):
+        loaded = 0
+        # A plan entry that 404s is not always a holiday. B3 stopped
+        # publishing monthly files somewhere back in its history -- 2015 has
+        # them, 2000 does not -- and the yearly archive is the only grain
+        # that covers those years. Rather than hardcode a cutoff year that
+        # is not documented anywhere and could move, a missing month or
+        # session falls back to that year's yearly file, which is
+        # self-correcting wherever the real boundary sits. Old yearly files
+        # are also small (2000 is 6.7 MB against 2025's 89 MB), so this is
+        # a cheap fallback for exactly the years that need it.
+        queue = list(self.file_plan(first, last))
+        planned = set(queue)
+        while queue:
+            kind, stamp = queue.pop(0)
             try:
                 frame = self._cached_cotahist(kind, stamp)
             except Exception as e:
-                # Holidays, and sessions B3 has not published yet, are
-                # ordinary gaps in a plan built from a calendar, not failures.
                 errors.append(f"{kind}{stamp}: {e}")
+                fallback = _yearly_fallback(kind, stamp)
+                if fallback and fallback not in planned:
+                    planned.add(fallback)
+                    queue.append(fallback)
                 continue
+            loaded += 1
             hit = frame[frame["symbol"] == symbol]
             if len(hit):
                 frames.append(hit)
         if not frames:
+            if loaded:
+                # Files came back fine; this instrument is simply not in
+                # them, which is a coverage question, not a fetch failure.
+                raise ValueError(
+                    f"no B3 end-of-day history for {symbol!r} in "
+                    f"{first}..{last}. COTAHIST covers the cash segment "
+                    f"(ações, units, ETFs, FIIs, Fiagro, BDRs, opções); "
+                    f"BM&F futures and the index levels are not in it at "
+                    f"all, and are intraday-only on B3's free feed.")
+            # Nothing loaded at all: say that, rather than blaming the
+            # instrument for what is a download problem.
             raise ValueError(
-                f"no B3 end-of-day history for {symbol!r}. COTAHIST covers the "
-                f"cash segment (ações, ETFs, FIIs, BDRs, opções); futures and "
-                f"indices are intraday-only on B3's free feed."
-                + (f" [{errors[0]}]" if errors else ""))
+                f"could not read any COTAHIST file covering {first}..{last} "
+                f"for {symbol!r}"
+                + (f" — first error: {errors[0]}" if errors else ""))
         out = pd.concat(frames, ignore_index=True)
         out = out.drop_duplicates(subset="ts", keep="last").sort_values("ts")
         if start:
@@ -573,6 +607,23 @@ def front_month(kind: str, today: date) -> str:
     raise ValueError(f"no front month found for {kind} at {today}")
 
 
+def _yearly_fallback(kind: str, stamp: str) -> tuple[str, str] | None:
+    """The yearly archive covering a monthly or daily stamp that was missing.
+
+    ``("M", "012000") -> ("A", "2000")``; ``("D", "03012000") -> ("A", "2000")``.
+    Yearly files are the one grain B3 has published for every year, so this
+    is the grain to retry with. Returns None for a stamp already yearly, or
+    one in the running year, whose archive B3 has not written yet.
+    """
+    if kind == "M":
+        year = int(stamp[2:])
+    elif kind == "D":
+        year = int(stamp[4:])
+    else:
+        return None
+    return None if year >= datetime.now(BRT).year else ("A", str(year))
+
+
 def _month_end(year: int, month: int) -> date:
     return (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1))
 
@@ -595,13 +646,40 @@ def _index_expiry(year: int, month: int) -> date:
     return earlier if (fifteenth - earlier) <= (later - fifteenth) else later
 
 
-def _http_get(url: str, timeout: float = 60.0) -> bytes:
-    """One plain GET. Separate so tests can hand the provider a stub instead."""
-    req = urllib.request.Request(url, headers={
-        # B3's edge answers a bare urllib with a challenge page; a browser
-        # User-Agent is what makes these public files actually reachable.
-        "User-Agent": "Mozilla/5.0 (compatible; lse-terminal)",
-        "Accept": "*/*",
-    })
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+def _http_get(url: str, timeout: float = 60.0, attempts: int = 3) -> bytes:
+    """One GET, retried, with the response length checked against the header.
+
+    Separate from the providers so tests can hand them a stub instead. The
+    retry is not defensive habit: a COTAHIST yearly archive is tens of
+    megabytes (2025 is 89 MB) and a dropped connection part-way through
+    yields a short body, which surfaces later as a corrupt-ZIP error with
+    nothing pointing at the download. Comparing what arrived against
+    Content-Length catches it where it happens, and a truncated read is
+    exactly the kind of failure a second attempt fixes.
+    """
+    last = None
+    for attempt in range(1, max(1, attempts) + 1):
+        req = urllib.request.Request(url, headers={
+            # B3's edge answers a bare urllib with a challenge page; a
+            # browser User-Agent is what makes these public files
+            # actually reachable.
+            "User-Agent": "Mozilla/5.0 (compatible; lse-terminal)",
+            "Accept": "*/*",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                declared = r.headers.get("Content-Length")
+                body = r.read()
+            if declared is not None and len(body) != int(declared):
+                raise B3Error(
+                    f"short read: got {len(body)} bytes of {declared}")
+            return body
+        except urllib.error.HTTPError:
+            # A 404 is an answer -- the file does not exist -- and retrying
+            # it just spends time to be told the same thing.
+            raise
+        except Exception as e:
+            last = e
+            if attempt == attempts:
+                break
+    raise B3Error(f"could not download {url}: {last}") from last
