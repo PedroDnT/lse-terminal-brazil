@@ -4,10 +4,15 @@ Brazilian market data for [LSE Terminal](https://github.com/londonstrategicedge/
 read straight from the institutions that publish it.
 
 ```
-pip install lse-terminal-brazil
+pip install git+https://github.com/PedroDnT/lse-terminal-brazil
 ```
 
-Restart the terminal. Two sources appear in MARKETS. There is nothing to
+Not on PyPI yet, so install from the repo for now; `pip install
+lse-terminal-brazil` is the intended form once it is published.
+
+Install it into whatever environment runs the terminal — the same one
+`lset` starts from, since that is the interpreter whose entry points get
+walked. Then restart the terminal. Two sources appear in MARKETS. There is nothing to
 configure and no account to open — B3 and the Banco Central both publish
 this data for free, and this package reads exactly those public sources
 with no vendor in the middle.
