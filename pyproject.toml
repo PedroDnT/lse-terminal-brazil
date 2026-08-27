@@ -50,3 +50,13 @@ packages = ["lse_terminal_brazil"]
 
 [tool.hatch.build.targets.sdist]
 include = ["lse_terminal_brazil", "tests", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+# The live tests talk to B3 and the Banco Central over the network, so they
+# are opt-in: `pytest` runs the offline suite, `pytest -m live` asks the
+# real sources. Nobody's unit run should fail because a Brazilian public
+# website is having an afternoon.
+addopts = "-m 'not live'"
+markers = [
+    "live: hits the real B3 / BCB endpoints over the network (opt-in)",
+]

@@ -104,14 +104,34 @@ implement `lse_terminal.contracts.Provider` and pass the terminal's own
 ## Tests
 
 ```
-pip install -e ".[dev]" && pytest tests/
+pip install -e ".[dev]"
+pytest tests/           # 28 offline tests
+pytest tests/ -m live   # 10 more, against the real B3 and BCB endpoints
 ```
 
-Every test runs offline: each provider takes its HTTP getter as a
-constructor argument, so the suite exercises the parsing and the request
-planning without depending on B3 or the Banco Central being up. The COTAHIST
-fixture is a dozen real records from a real session, kept whole so the
-fixed-width offsets are tested against the layout B3 actually publishes.
+**Offline (default).** Each provider takes its HTTP getter as a constructor
+argument, so the suite exercises the parsing and the request planning
+without depending on B3 or the Banco Central being up. The COTAHIST fixture
+is a dozen real records from a real session, kept whole so the fixed-width
+offsets are tested against the layout B3 actually publishes.
+
+**Live (opt-in).** Everything here reads a public download or an
+undocumented JSON feed, so the standing risk is not a logic bug — it is B3
+moving a URL, renaming a field, or adding a column to the fixed-width
+record, with no notice owed to anyone. No stubbed test sees that coming.
+These ask the real sources, and assert on shape and invariants rather than
+on prices, so they fail when something has genuinely broken and not because
+the market moved. CI runs them weekly and on demand.
+
+CI also asserts the thing the suite itself cannot: that a stock terminal
+actually *discovers* these providers through the entry point. Tests that
+import the providers directly would pass even with that broken.
+
+The offline suite runs across Python 3.10–3.13 and both pandas 2.x and 3.x.
+That axis is deliberate: the two disagree about the resolution a parsed
+datetime column carries, which would silently rescale every timestamp. The
+providers sidestep it by doing date arithmetic on integers, and the matrix
+is what keeps that true rather than merely intended.
 
 ## Terms
 

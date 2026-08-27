@@ -1,0 +1,93 @@
+# Two jobs, because this package has two entirely different ways to break.
+#
+# `unit` is the ordinary one: logic bugs, caught offline on every push,
+# across the interpreter and pandas versions people actually run. pandas is
+# an explicit axis rather than whatever pip resolves, because 2.x and 3.x
+# disagree about the resolution a parsed datetime column carries -- the
+# providers avoid that by doing date arithmetic on integers, and this
+# matrix is what keeps that true rather than merely intended.
+#
+# `live` is the one that matters more here. Everything this package reads
+# is a public download or an undocumented JSON feed, so nobody owes us
+# notice before a URL moves or the fixed-width layout gains a column. No
+# stubbed test can see that coming; only asking B3 can. It runs weekly and
+# on demand, and a failure means the source changed, not that the code did.
+name: test
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Monday 09:00 UTC — after a Brazilian session has published, so a
+    # failure reflects the real weekday state of the sources.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        pandas: ["2", "3"]
+        exclude:
+          # pandas 3 requires Python >= 3.11.
+          - python: "3.10"
+            pandas: "3"
+        include:
+          # The oldest stack anyone is realistically on: pandas 2 still
+          # paired with numpy 1, where the array API differs.
+          - python: "3.10"
+            pandas: "2"
+            numpy: "1"
+    name: unit (py${{ matrix.python }}, pandas ${{ matrix.pandas }}${{ matrix.numpy && format(', numpy {0}', matrix.numpy) || '' }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          # Pin the axis last so it wins over whatever the dependency tree
+          # resolved on its own.
+          pip install "pandas==${{ matrix.pandas }}.*"
+          if [ -n "${{ matrix.numpy }}" ]; then pip install "numpy==${{ matrix.numpy }}.*"; fi
+          python -c "import sys,pandas,numpy;print(sys.version.split()[0],pandas.__version__,numpy.__version__)"
+      - name: offline suite
+        run: pytest tests/ -q
+      - name: the plugin is actually discovered by the terminal
+        # The whole premise of this package is the entry point. A suite that
+        # imports the providers directly would pass even if that broke.
+        run: |
+          cd "$RUNNER_TEMP"
+          python -c "
+          from lse_terminal.engine.registry import Registry, load_builtins, load_plugins
+          r = Registry(); load_builtins(r); load_plugins(r)
+          names = [p.name for p in r.all()]
+          assert not r.plugin_errors, r.plugin_errors
+          assert {'b3', 'bcb'} <= set(names), names
+          print('discovered:', names)
+          "
+
+  live:
+    # Only where a red result is a signal worth acting on: on a schedule, on
+    # demand, and on the default branch. On a pull request it would just be
+    # noise about somebody else's website.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: the real B3 and Banco Central endpoints
+        # A B3 holiday or an outage is a real red here, and that is the
+        # intent: it is a monitor, not a gate. Nothing merges on it.
+        run: pytest tests/ -m live -q
