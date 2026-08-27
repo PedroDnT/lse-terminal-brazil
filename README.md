@@ -143,10 +143,38 @@ datetime column carries, which would silently rescale every timestamp. The
 providers sidestep it by doing date arithmetic on integers, and the matrix
 is what keeps that true rather than merely intended.
 
-## Terms
+## Terms — read this before building a product on it
 
-COTAHIST and the `cotacao.b3.com.br` feed are published by B3 for public
-download; the SGS API is published by the Banco Central as open data. Every
-request goes out from the user's own machine.
+The MIT licence covers this code. It does not cover the data, and the two
+sources are on completely different footing.
 
-MIT.
+**Banco Central (SGS)** is Brazilian government open data, published as an
+open API. Use it however you like, including commercially.
+
+**B3 is not open data.** Its [Termos de Uso](https://www.b3.com.br/pt_br/termos-de-uso-e-protecao-de-dados/termos-de-uso/)
+say visitors may use the data on its pages *"para uso exclusivamente
+pessoal"* — for exclusively personal use — and expressly prohibit
+*"distribuição, redistribuição, transferência, transmissão, retransmissão,
+licença, sublicença, locação, empréstimo, venda, revenda, recirculação,
+reformatação, publicação, prestação de serviços autônomos de difusão de
+dados"*, along with using the data to construct any kind of index. B3 sells
+market data commercially (UP2DATA, vendor licensing), so this is a live
+commercial interest, not boilerplate.
+
+In practice that means:
+
+* **Running the terminal on your own machine, for your own trading — fine.**
+  That is the personal use the terms describe, and it is what this package
+  is for. Every request goes out from the user's own machine; nothing is
+  relayed through a server here.
+* **Serving B3 data to other people is not.** A hosted API, a paid product,
+  a public dashboard, a data feed for clients, or an index built from these
+  numbers all land on the prohibited list. That needs a market-data
+  agreement with B3, not this package.
+
+This is a plain reading of published terms by someone who is not a lawyer,
+and not legal advice. If you are going commercial, have Brazilian counsel
+look at it — and note that a market-data licence is the normal route, not
+an obstacle to route around.
+
+MIT (the code).
