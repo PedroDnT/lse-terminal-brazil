@@ -187,13 +187,29 @@ def parse_cotahist(raw: bytes) -> pd.DataFrame:
         return pd.DataFrame(columns=["symbol", "ts", *CANDLE_COLUMNS[1:],
                                      "codbdi", "name", "spec", "isin"])
 
+    # FATCOT, the "fator de cotação": COTAHIST quotes a paper's price per
+    # THIS MANY units, not per one. It is 1 for almost everything, and 10
+    # or 1000 for a handful -- 71 (ticker, factor) pairs on the 2024 tape
+    # alone, including SMLL11, which without this division charts at
+    # 2,033.00 instead of 203.30. Confirmed against the file's own
+    # published financial volume: average/factor x quantity reproduces
+    # VOLTOT, average x quantity is a thousand times too large.
+    #
+    # It varies per ROW, not per ticker -- SMLL11 carries 10 on two 2024
+    # sessions and 1 on the rest -- so it has to divide element-wise here
+    # rather than be looked up once per instrument.
+    factor = _int_field(grid, 210, 217).astype("float64")
+    # A zero would be a malformed record; treating it as 1 leaves the raw
+    # price rather than producing an infinity.
+    np.putmask(factor, factor <= 0, 1.0)
+    scale = _PRICE_SCALE * factor
     frame = pd.DataFrame({
         "symbol": _text_field(grid, 12, 24),
         "ts": _epoch_seconds(_int_field(grid, 2, 10)),
-        "open": _int_field(grid, 56, 69) / _PRICE_SCALE,
-        "high": _int_field(grid, 69, 82) / _PRICE_SCALE,
-        "low": _int_field(grid, 82, 95) / _PRICE_SCALE,
-        "close": _int_field(grid, 108, 121) / _PRICE_SCALE,
+        "open": _int_field(grid, 56, 69) / scale,
+        "high": _int_field(grid, 69, 82) / scale,
+        "low": _int_field(grid, 82, 95) / scale,
+        "close": _int_field(grid, 108, 121) / scale,
         # Traded shares/contracts, not the financial total: "volume" means
         # quantity everywhere else in the terminal, and matching that is what
         # lets a B3 chart's volume pane read like every other chart's.
@@ -202,6 +218,8 @@ def parse_cotahist(raw: bytes) -> pd.DataFrame:
         "name": _text_field(grid, 27, 39),
         "spec": _text_field(grid, 39, 49),
         "isin": _text_field(grid, 230, 242),
+        # Kept so a caller can tell a divided price from an undivided one.
+        "quotation_factor": factor.astype("int64"),
     })
     # An auction that never printed leaves a zero-priced record behind. It is
     # not a bar, and left in it drags a chart's low to zero.

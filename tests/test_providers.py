@@ -469,3 +469,35 @@ def test_a_short_download_is_caught_at_the_download():
         mod.urllib.request.urlopen = real
     assert body == full
     assert calls["n"] == 2, "the short read should have been retried"
+
+
+def test_prices_are_divided_by_the_quotation_factor():
+    """COTAHIST quotes a paper per FATCOT units, not per one.
+
+    It is 1 for almost everything, so this is invisible until it isn't:
+    71 (ticker, factor) pairs on the 2024 tape carry 10 or 1000, and
+    SMLL11 -- an ETF anyone might chart -- reads 2,033.00 instead of
+    203.30 without the division. Confirmed against the file's own
+    published financial volume: average/factor x quantity reproduces
+    VOLTOT.
+
+    The factor varies per ROW, not per ticker (SMLL11 carries 10 on two
+    2024 sessions and 1 on the rest), which is what this checks.
+    """
+    lines = FIXTURE.read_bytes().split(b"\r\n")
+    petr = next(l for l in lines if l[:2] == b"01" and l[12:24].strip() == b"PETR4")
+    assert petr[210:217] == b"0000001", "fixture assumption: PETR4 is factor 1"
+    # The same record re-stamped with a factor of 1000, as B3 does for a
+    # paper quoted per lot.
+    scaled = petr[:210] + b"0001000" + petr[217:]
+    frame = parse_cotahist(b"\r\n".join([lines[0], petr, scaled]) + b"\r\n")
+
+    plain = frame[frame["quotation_factor"] == 1].iloc[0]
+    lot = frame[frame["quotation_factor"] == 1000].iloc[0]
+    assert plain["close"] == 41.35
+    assert lot["close"] == pytest.approx(41.35 / 1000)
+    for col in ("open", "high", "low"):
+        assert lot[col] == pytest.approx(plain[col] / 1000)
+    # Quantity is a count of units traded and is NOT scaled by the factor:
+    # only the price is quoted per lot.
+    assert lot["volume"] == plain["volume"]
