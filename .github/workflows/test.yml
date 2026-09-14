@@ -8,10 +8,12 @@
 # matrix is what keeps that true rather than merely intended.
 #
 # `live` is the one that matters more here. Everything this package reads
-# is a public download or an undocumented JSON feed, so nobody owes us
-# notice before a URL moves or the fixed-width layout gains a column. No
-# stubbed test can see that coming; only asking B3 can. It runs weekly and
-# on demand, and a failure means the source changed, not that the code did.
+# is a public download, an undocumented JSON feed or somebody else's
+# warehouse, so nobody owes us notice before a URL moves or the fixed-width
+# layout gains a column. No stubbed test can see that coming; only asking
+# B3 can. It runs weekly and on demand, and a failure means the source
+# changed, not that the code did. The Silo half of it needs a key and skips
+# without one.
 name: test
 
 on:
@@ -75,7 +77,7 @@ jobs:
           r = Registry(); load_builtins(r); load_plugins(r)
           names = [p.name for p in r.all()]
           assert not r.plugin_errors, r.plugin_errors
-          assert {'b3', 'bcb'} <= set(names), names
+          assert {'b3', 'bcb', 'silo'} <= set(names), names
           print('discovered:', names)
           "
 
@@ -95,7 +97,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install "git+https://github.com/londonstrategicedge/lse-terminal"
           pip install -e ".[dev]"
-      - name: the real B3 and Banco Central endpoints
+      - name: the real B3, Banco Central and Silo endpoints
         # A B3 holiday or an outage is a real red here, and that is the
         # intent: it is a monitor, not a gate. Nothing merges on it.
+        #
+        # SILO_KEY is optional. Set it as a repository secret and the Silo
+        # tests run too; leave it unset and they skip, so a fork with no
+        # key still monitors the two free sources rather than going red on
+        # a credential it was never meant to have.
+        env:
+          SILO_KEY: ${{ secrets.SILO_KEY }}
         run: pytest tests/ -m live -q
