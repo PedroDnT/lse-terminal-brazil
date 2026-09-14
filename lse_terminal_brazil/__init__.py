@@ -5,14 +5,19 @@ the next start -- no fork, no patch, no configuration. The terminal
 discovers them through the ``lse_terminal.providers`` entry-point group
 declared in this package's pyproject.
 
-Neither source needs an account. ``b3`` reads the exchange's own public
-files; ``bcb`` reads the central bank's open series API. What each covers,
-and what it does not, is in each module's docstring and in the README.
+Two of the three need no account at all: ``b3`` reads the exchange's own
+public files and ``bcb`` the central bank's open series API. ``silo`` is
+the exception -- it wants a key, and in return serves the same B3 history
+in a fraction of the time and adds the CVM's monthly fund statistics, which
+no exchange file carries. Without a key it reports itself unconfigured and
+the other two are unaffected. What each covers, and what it does not, is in
+each module's docstring and in the README.
 """
 
 try:
     from lse_terminal_brazil.b3 import B3Provider
     from lse_terminal_brazil.bcb import BcbProvider
+    from lse_terminal_brazil.silo import SiloProvider
 except ModuleNotFoundError as e:  # pragma: no cover - install-shape problem
     # Both shapes matter: no terminal at all (e.name == "lse_terminal") and
     # the PyPI placeholder, which imports but has no submodules
@@ -33,5 +38,5 @@ except ModuleNotFoundError as e:  # pragma: no cover - install-shape problem
         "then install this package into that same environment."
     ) from e
 
-__all__ = ["B3Provider", "BcbProvider"]
+__all__ = ["B3Provider", "BcbProvider", "SiloProvider"]
 __version__ = "0.1.0"

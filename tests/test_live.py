@@ -1,4 +1,4 @@
-"""Live tests: the real B3 and Banco Central endpoints, over the network.
+"""Live tests: the real B3, Banco Central and Silo endpoints, over the network.
 
 Deselected by default (`-m "not live"` in pyproject), because the unit
 suite must stay runnable offline and must never fail because a Brazilian
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import pytest
 
-from lse_terminal_brazil import B3Provider, BcbProvider
+from lse_terminal_brazil import B3Provider, BcbProvider, SiloProvider
 from lse_terminal.contracts import CANDLE_COLUMNS
 
 pytestmark = pytest.mark.live
@@ -161,3 +161,103 @@ def test_sgs_deep_history_is_still_reachable(tmp_path):
     assert_candle_frame(df, minimum=20)
     # 2000 is well before the ten-year window a single SGS call allows.
     assert df["ts"].iloc[0] < 1_000_000_000
+
+
+# ── Silo ────────────────────────────────────────────────────────────────
+
+# Unlike B3 and the Banco Central, Silo needs a key, and CI has no business
+# holding one by default. These skip rather than fail when SILO_KEY is
+# unset, so the scheduled run still exercises the two free sources.
+silo_key = pytest.mark.skipif(not SiloProvider().configured(),
+                              reason="SILO_KEY is not set")
+
+
+@silo_key
+def test_silo_coverage_still_reports_the_quotes_dataset():
+    """Everything else here depends on this, so it is worth asserting alone."""
+    p = SiloProvider()
+    datasets = {row["dataset"] for row in p.coverage()}
+    assert "quotes" in datasets
+    # A warehouse that has stopped ingesting is not an outage and would not
+    # fail any other test here; a stale session date is the only symptom.
+    assert p.latest_session().year >= 2025
+
+
+@silo_key
+def test_silo_serves_a_daily_history():
+    df = SiloProvider().candles("PETR4", "1d", limit=60)
+    assert_candle_frame(df, minimum=40)
+
+
+@silo_key
+def test_silo_pages_past_the_row_cap():
+    """The whole reason _get() reads Content-Range.
+
+    PostgREST truncates at 1,000 rows and says so only in a header, so a
+    provider that ignored it would return exactly 1,000 rows here and look
+    entirely healthy doing it.
+    """
+    df = SiloProvider().candles("PETR4", "1d", limit=1500, start="2019-01-01")
+    assert_candle_frame(df, minimum=1200)
+    assert len(df) > 1000, "capped at the PostgREST row limit"
+
+
+@silo_key
+def test_silo_and_b3_agree_on_a_session(tmp_path):
+    """Two independent paths to the same COTAHIST row must produce one number.
+
+    This is the assertion that would have caught the quotation factor: b3
+    parses the fixed-width file itself, Silo parsed it into Postgres, and
+    only a shared understanding of what the price column means makes them
+    match to the cent.
+    """
+    silo = SiloProvider()
+    day = silo.latest_session()
+    mine = silo.candles("PETR4", "1d", limit=5, end=day.isoformat())
+    theirs = B3Provider(cache_dir=tmp_path).candles(
+        "PETR4", "1d", limit=5, end=day.isoformat())
+    overlap = mine.merge(theirs, on="ts", suffixes=("_silo", "_b3"))
+    assert len(overlap) >= 3, "no shared sessions to compare"
+    for column in ("open", "high", "low", "close"):
+        assert (overlap[f"{column}_silo"] - overlap[f"{column}_b3"]).abs().max() < 0.005
+
+
+@silo_key
+def test_silo_search_reaches_the_ticker_being_typed():
+    out = SiloProvider().search("PETR", limit=20)
+    assert "PETR4" in {i.symbol for i in out}
+    assert all(i.category for i in out), "every row needs a folder label"
+
+
+@silo_key
+def test_silo_default_listing_is_grouped_and_nonempty():
+    out = SiloProvider().search("", limit=50)
+    assert len(out) >= 20
+    categories = [i.category for i in out]
+    # Contiguous by category: the sidebar renders the order verbatim, so a
+    # category appearing twice would draw two folders with the same name.
+    assert len(set(categories)) == len(list(dict.fromkeys(categories)))
+
+
+@silo_key
+def test_silo_serves_a_cvm_fund_series():
+    """The part COTAHIST has no equivalent for."""
+    p = SiloProvider()
+    fund = next(i for i in p.search("08973948000135", limit=20)
+                if i.symbol.startswith("CVM:"))
+    df = p.candles(fund.symbol, "1d", limit=24)
+    assert list(df.columns) == CANDLE_COLUMNS
+    assert len(df) >= 6
+    assert df["ts"].is_monotonic_increasing
+    assert (df["open"] == df["close"]).all()
+    assert (df["volume"] == 0).all()
+
+
+@silo_key
+def test_silo_quote_is_the_stored_session_not_now():
+    import time
+    q = SiloProvider().quote("PETR4")
+    assert q.price > 0
+    # Stamped at the session it came from. A provider that filled in
+    # time.time() would look live and be a day stale.
+    assert q.ts <= time.time()
